@@ -11,7 +11,7 @@ load_dotenv()  # loads backend/.env if present
 class Settings:
     # ---- Groq / LLM ----
     GROQ_API_KEY: str = os.getenv("GROQ_API_KEY", "")          # <-- set in .env
-    GROQ_PRIMARY_MODEL: str = os.getenv("GROQ_PRIMARY_MODEL", "gemma2-9b-it")
+    GROQ_PRIMARY_MODEL: str = os.getenv("GROQ_PRIMARY_MODEL", "llama-3.1-8b-instant")
     GROQ_CONTEXT_MODEL: str = os.getenv("GROQ_CONTEXT_MODEL", "llama-3.3-70b-versatile")
 
     # ---- Database ----

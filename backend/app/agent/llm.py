@@ -13,20 +13,26 @@ backend/.env as GROQ_API_KEY (see .env.example). Nothing else in this file
 needs to change.
 """
 from langchain_groq import ChatGroq
+import httpx
+
 from app.config import settings
 
 # -----------------------------------------------------------------------
 # GROQ_API_KEY IS READ HERE. Do not hard-code a key in this file -
 # set it in backend/.env instead.
 # -----------------------------------------------------------------------
+groq_http_client = httpx.Client(trust_env=False)
+
 primary_llm = ChatGroq(
     api_key=settings.GROQ_API_KEY,          # <-- Groq API key used here
     model=settings.GROQ_PRIMARY_MODEL,      # gemma2-9b-it
     temperature=0.2,
+    http_client=groq_http_client,
 )
 
 context_llm = ChatGroq(
     api_key=settings.GROQ_API_KEY,          # <-- Groq API key used here
     model=settings.GROQ_CONTEXT_MODEL,      # llama-3.3-70b-versatile
     temperature=0.3,
+    http_client=groq_http_client,
 )
