@@ -12,6 +12,8 @@ Tool 5: get_interaction_history
 Tool 6: schedule_followup
 """
 import json
+import re
+import datetime as dt
 from sqlalchemy.orm import Session
 
 from app import crud
@@ -28,15 +30,102 @@ rep's free text. Return ONLY a JSON object with any of these keys that are
 present in the text (omit keys not mentioned): {FIELD_KEYS}.
 interaction_type must be one of: Meeting, Call, Email, Conference, Sample Drop, Other.
 sentiment must be one of: Positive, Neutral, Negative.
+interaction_date must be YYYY-MM-DD. Today's date is {dt.date.today().isoformat()}.
+interaction_time must be 24-hour HH:MM.
 materials_shared and samples_distributed are arrays of strings.
 No prose, no markdown fences - JSON only.
 """
 
+EDIT_EXTRACTION_SYSTEM_PROMPT = f"""You extract ONLY the new/changed field values from an edit
+instruction for an HCP CRM interaction. Return ONLY a JSON object with any of
+these keys that are changed: {FIELD_KEYS}. Omit fields not being edited.
+If the rep says "change the name to James", return {{"hcp_name": "James"}}.
+If the rep says "make the time 10 pm", return {{"interaction_time": "22:00"}}.
+interaction_date must be YYYY-MM-DD. Today's date is {dt.date.today().isoformat()}.
+interaction_time must be 24-hour HH:MM.
+No prose, no markdown fences - JSON only.
+"""
 
-def _extract_fields_with_llm(text: str) -> dict:
+
+def _parse_date(value: str) -> str:
+    if not value:
+        return value
+    raw = str(value).strip()
+    if not raw or raw.lower() in {"unknown", "n/a", "none", "null"}:
+        return None
+
+    today = dt.date.today()
+    lower = raw.lower()
+    if lower == "today":
+        return today.isoformat()
+    if lower == "tomorrow":
+        return (today + dt.timedelta(days=1)).isoformat()
+    if lower == "yesterday":
+        return (today - dt.timedelta(days=1)).isoformat()
+
+    cleaned = re.sub(r"(\d+)(st|nd|rd|th)", r"\1", lower)
+    cleaned = cleaned.replace(",", " ")
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    formats = [
+        "%Y-%m-%d", "%d %B %Y", "%d %b %Y", "%B %d %Y", "%b %d %Y",
+        "%d/%m/%Y", "%m/%d/%Y", "%d-%m-%Y", "%m-%d-%Y",
+    ]
+    for fmt in formats:
+        try:
+            return dt.datetime.strptime(cleaned, fmt).date().isoformat()
+        except ValueError:
+            pass
+    return raw
+
+
+def _parse_time(value: str) -> str:
+    if not value:
+        return value
+    raw = str(value).strip()
+    if not raw or raw.lower() in {"unknown", "n/a", "none", "null"}:
+        return None
+
+    cleaned = raw.lower().replace(".", "").strip()
+    cleaned = re.sub(r"\s+", " ", cleaned)
+    match = re.fullmatch(r"(\d{1,2})(?::(\d{2}))?\s*(am|pm)?", cleaned)
+    if match:
+        hour = int(match.group(1))
+        minute = int(match.group(2) or 0)
+        meridiem = match.group(3)
+        if meridiem == "pm" and hour != 12:
+            hour += 12
+        if meridiem == "am" and hour == 12:
+            hour = 0
+        if 0 <= hour <= 23 and 0 <= minute <= 59:
+            return f"{hour:02d}:{minute:02d}"
+    return raw
+
+
+def _normalize_extracted_fields(fields: dict) -> dict:
+    normalized = {
+        key: value
+        for key, value in fields.items()
+        if key in FIELD_KEYS and value not in (None, "", [], "unknown", "Unknown")
+    }
+    if "interaction_date" in normalized:
+        parsed = _parse_date(normalized["interaction_date"])
+        if parsed:
+            normalized["interaction_date"] = parsed
+        else:
+            normalized.pop("interaction_date", None)
+    if "interaction_time" in normalized:
+        parsed = _parse_time(normalized["interaction_time"])
+        if parsed:
+            normalized["interaction_time"] = parsed
+        else:
+            normalized.pop("interaction_time", None)
+    return normalized
+
+
+def _extract_fields_with_llm(text: str, edit_mode: bool = False) -> dict:
     """Uses the PRIMARY model (gemma2-9b-it) for fast structured extraction."""
     messages = [
-        ("system", EXTRACTION_SYSTEM_PROMPT),
+        ("system", EDIT_EXTRACTION_SYSTEM_PROMPT if edit_mode else EXTRACTION_SYSTEM_PROMPT),
         ("user", text),
     ]
     response = primary_llm.invoke(messages)
@@ -44,7 +133,8 @@ def _extract_fields_with_llm(text: str) -> dict:
     if raw.lower().startswith("json"):
         raw = raw[4:].strip()
     try:
-        return json.loads(raw)
+        parsed = json.loads(raw)
+        return _normalize_extracted_fields(parsed if isinstance(parsed, dict) else {})
     except json.JSONDecodeError:
         return {}
 
@@ -81,7 +171,7 @@ def edit_interaction(db: Session, args: dict) -> dict:
     """
     interaction_id = args.get("interaction_id")
     text = args.get("text", "")
-    extracted = _extract_fields_with_llm(text)
+    extracted = _extract_fields_with_llm(text, edit_mode=True)
 
     if not interaction_id:
         return {"error": "No active interaction to edit."}

@@ -69,6 +69,9 @@ def update_interaction(db: Session, interaction_id: str, data: dict) -> Optional
     interaction = get_interaction(db, interaction_id)
     if not interaction:
         return None
+    if data.get("hcp_name"):
+        hcp = find_or_create_hcp(db, data["hcp_name"])
+        interaction.hcp_id = hcp.id if hcp else None
     for field, value in data.items():
         if value is not None and hasattr(interaction, field):
             setattr(interaction, field, value)
