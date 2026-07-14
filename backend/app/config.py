@@ -17,7 +17,7 @@ class Settings:
     # ---- Database ----
     DATABASE_URL: str = os.getenv(
         "DATABASE_URL",
-        "postgresql+psycopg2://postgres:password@localhost:5432/hcp_crm",
+        "mysql+pymysql://root:password@localhost:3306/hcp_crm",
     )
 
     # ---- CORS ----
